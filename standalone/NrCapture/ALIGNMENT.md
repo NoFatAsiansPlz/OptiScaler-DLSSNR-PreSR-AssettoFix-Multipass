@@ -1,0 +1,55 @@
+# OptiScaler / Display Filter application audit
+
+This compares the current `codex/nr-simplify` in-game source with the standalone capture application. No games or desktop UI were operated. The exact game/placement from the reported weak-effect comparison was not identified, so this audit establishes code and fixture differences, not a complete reproduction of that report.
+
+**Correction after user clarification:** the reported quality/strength gap occurs at settings parity. Changes to defaults/ranges below therefore do not diagnose or establish a fix for that gap. In a subsequent fixed-input, fixed-parameter test, NR's mean edit was 0.0151868 with history reset and 0.0155371 after 60 static frames with estimated zero motion and retained history (only the first frame reset). That small magnitude change does not explain a 2–3× strength gap. The actual loaded DLL matched the requested runtime in this test. In-game buffer/guide/history comparisons remain necessary; the parity issue is unresolved. The build now logs the actually loaded NR module and live NR reset counts, without changing model strength to disguise that uncertainty.
+
+| Stage | Finding | Result |
+| --- | --- | --- |
+| Runtime | The in-game integration fixture and Display Filter use the same original NR DLL, SHA-256 `E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E`. Both create feature 18 with the same tuning keys and UI correction default. | No runtime substitution or binary patch needed. The standalone project identity and driver initialization remain independent. |
+| Model defaults | `Config.h` defaults first-pass Local tone to 1. Standalone settings had inherited 0 from the generic `ModelSettings` struct. | First-pass default corrected to 1. Existing explicit preferences are retained. |
+| Model limits | OptiScaler's `PassProfiles.h` and menu clamp intensity/structure/tone to 2. Standalone allowed 3. The saved user settings read during this audit had all three at 3. | UI/load/creation limits aligned to 0–2. Being outside OptiScaler's range is confirmed; attributing red eyes specifically to this is an inference, not a reproduced visual result. |
+| Multipass | OptiScaler gives each feature its own parameters and defaults later-pass Local tone to 0. Standalone reused one map and repeated Local tone on both passes. | Separate parameter maps and histories; pass 2 Local tone is now 0. Shared input/output staging and final-only composition are retained. |
+| Detail versus intensity | OptiScaler exposes final Detail strength 0–2, separate from model Intensity 0–2. Standalone capped final strength at 1, leaving model controls as the way to increase the edit. | Detail strength exposed through 2. Model intensity still changes model synthesis; the controls are not interchangeable. |
+| Finished SDR input | The in-game DX12 finished-SDR path sets `Passthrough=1`. WGC supplies linear scRGB, but standalone always applied Hybrid/Neutwo encoding again. | Explicit SDR path converts capture linear RGB back to sRGB, uses the same shared passthrough encode/resolve, then converts to scRGB for output. Exact unmodified/protected pixels are restored from the original capture. |
+| HDR mapping | Standalone exposed only Hybrid/Neutwo composed, while OptiScaler has soft knee and replace modes as well. | All five mappings exposed with matching shader mode IDs. Existing saved menu indexes preserved; new default is soft knee. |
+| Final composition | Both already use the same compiled shader for luma/headroom composition, colour strength, skin controls, matched residuals and signed private-DLSS carrier. | Shared in-game shader unchanged. Standalone adds only SDR capture transfer conversion. Default highlight guard stays 2, matching OptiScaler. |
+
+## Evidence and limits
+
+On the 1280×720 Windows wallpaper fixture, GPU readback of the corrected SDR model input differed from the original sRGB values by 0.0001845 mean RGB, consistent with the FP16 conversion. Original/disabled and full skin/environment protection remained bit-exact. SDR on HDR desktop normalization at 80 versus 320 nits differed by at most 0.000000045 after dividing out brightness (less than one FP16 subnormal step).
+
+The old default route (Hybrid proxy, Local tone 0) reproduced its previous mean linear RGB edit of 0.007578. The corrected default SDR route at intensity 1 produced 0.012894, about 1.70× the mean pixel difference. This is not a perceptual-strength measurement and does not predict every game. Holding Local tone at 1, the extra Hybrid/Neutwo curves actually produced *larger* average pixel differences than SDR passthrough on this fixture (0.015187 / 0.016846). Therefore removing the extra curve must not be advertised as a universal strength boost: it aligns the input and composition domain.
+
+The 1440p/50% private-DLSS/two-pass/motion check passed changed pixels, mode switching, skin and colour endpoints, SDR/HDR bypass, brightness normalization, moving frames and HDR highlights. No visual claim about eyes or faces follows from these fixtures.
+
+## Differences that cannot be inferred away
+
+### Matched-input GPU comparison (subsequent investigation)
+
+`NrCaptureCheck --quality-check 1` now compiles the actual in-game `DlssNr_Proxy.cpp` into the **check executable only**, alongside the standalone `Runtime`. Test adapters bind the wrapper to the already initialized, unmodified NGX dispatcher; game hooks and compatibility patching are not linked. Independent feature handles receive identical colour, depth, motion, dimensions, settings and reset flags. A separate resolve dispatch reconstructs the in-game composition constants and compares its result with `Processor::Run`.
+
+This is a comparison of application paths under identical inputs and the same NGX initialization context, not a reproduction of the user's live game-versus-overlay report. OptiScaler normally initializes NGX using the game's identity/version; the headless comparison does not reproduce those driver-profile differences. No defaults or rendering behaviour were changed during this investigation.
+
+- The wallpaper fixture at 1280×720 produced bit-identical raw NR output through the two wrappers.
+- An offline fixture derived from the saved Cyberpunk finished-picture **model proxy** also produced bit-identical raw NR output and composed pixels: two passes at 1280×720 in finished-SDR mode, and one pass at 640×360 with a 1280×720 HDR/Hybrid matched-residual resolve.
+- Both game-fixture cases retained history for 12 frames with the same estimated vectors and reset flags. Raw output remained bit-identical every frame. The reference uses separate per-pass output textures, also checking the standalone's shared output staging against that arrangement.
+- Holding the frame and tuning fixed, changing constant depth between 1, 0.5, 0.01 and 0 produced identical reset-frame output. This rules out the chosen constant depth value in those tests; it does not establish equivalence to moving engine depth.
+- Varying input alpha between 1, 0.5 and 0 did not change the model's RGB output. RGBA8 versus FP16 input, quantized to the same 8-bit RGB levels, differed by about 0.000045–0.000051 mean RGB on the game fixture, far below the model's roughly 0.03 mean edit. This does not validate DWM's treatment of output alpha.
+- Private-DLSS/two-pass/motion regression checks passed on the game fixture with the D3D12 debug layer, including exact SDR/HDR bypass and finite, changing output. This verifies operation, not equivalence to the in-game private upscaler.
+- A one-pass working-size sweep on the same 1280×720 game fixture measured mean linear RGB edits of 0.02383059 at 100%, 0.02228079 at 67%, and 0.02474356 at 50%. This fixture does not demonstrate a 2–3× loss caused by working resolution. Spatial/perceptual changes and a full-resolution live scene still require a matched comparison.
+
+The saved game's `before_00.raw` is the encoded model proxy, despite its old manifest calling it the original frame. It was decoded from sRGB and resized for the fixture; it was **not** treated as an original WGC scRGB capture or used to claim a game-output quality match. In-game depth/motion and the untouched finished frame were not saved in that capture.
+
+Evidence: `out/quality-reference.log`, `out/quality-game-temporal.log`, `out/quality-game-hdr-temporal.log`, `out/quality-game-scale.log`, and `out/quality-private-dlss.log`. Remaining boundaries are the actual live inputs/guides, NGX initialization context, private temporal enlargement, and capture/presentation. A matched-frame reproduction specifying the game, in-game placement and actual model dimensions is still needed to locate the reported quality gap. No quality fix is claimed from these results.
+
+### Live inputs and placement
+
+- Capture sees the finished picture after the game's tone mapping, AA/upscaling, bloom, grading and HUD. An in-game pre/post-SR pass can receive scene-linear or pre-exposed colour before those operations. A screenshot cannot recover that buffer.
+- OptiScaler has real depth, motion, reset and exposure context. Display Filter has constant depth and optional estimated motion. Zero-motion mode resets every frame by design; estimated motion retains history but can misclassify movement/occlusion. No change was made to pretend these guides are equivalent.
+- Match actual model pixel dimensions. A 100% pass before the game's upscaler may run far below the desktop's resolution; Display Filter's 100% is the full captured image. The same percentage can therefore mean a very different neural working scale.
+- Auto content selection follows the display's HDR state, not the content's origin. SDR on an HDR desktop needs explicit Finished SDR. Automatic reference white follows Windows' desktop SDR white; OptiScaler's finished-HDR path uses 203 nits. Set the same reference for an HDR comparison. Early scene-space paper-white values do not directly translate to physical display nits.
+- In-game style/preset, per-pass overrides, supersampling above 100%, and changed highlight guard can differ from the standalone baseline. This build matches default model profiles rather than importing arbitrary game configuration.
+- A private DLSS feature can produce small frame-to-frame differences even with reset asserted. Controlled colour comparisons therefore use features at the same evaluation age; live capture does not recreate the feature every frame.
+
+Source trace: `OptiScaler/Config.h`, `dlssnr/PassProfiles.h`, `dlssnr/DlssNr_Proxy.cpp`, `shaders/dlssnr/DlssNr_Dx12_Encode.cpp`, `DlssNr_Dx12_FinishedCompose.cpp`, `precompile/dlssnr.hlsl`; standalone `Runtime.cpp`, `Processor.cpp`, `CaptureColour.hlsl`, `Capture.cpp`, and `Presentation.cpp`.

@@ -1,5 +1,9 @@
 > **v0.8.7 prerelease:** [finished-picture queue safety fix and validation](docs/RELEASE-v0.8.7.md).
 
+## Standalone Display Filter
+
+The [Display Filter source and build instructions](standalone/NrCapture/README.md) are in `standalone/NrCapture`. This Windows application applies neural rendering to a captured screen or window.
+
 <div align="center">
 
   ![Logo](https://github.com/user-attachments/assets/c7dad5da-0b29-4710-8a57-b58e4e407abd)

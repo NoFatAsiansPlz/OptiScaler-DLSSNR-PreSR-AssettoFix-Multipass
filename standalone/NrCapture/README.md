@@ -1,0 +1,144 @@
+# Display Filter — screen and window overlay
+
+A standalone Windows overlay that applies NVIDIA neural rendering (NR) to a selected screen or application window. It offers Windows Graphics Capture and DXGI Desktop Duplication, and displays the processed picture in a separate, aligned, click-through window. Screen mode processes the desktop as you switch applications. Window mode follows a specific application, independently of its name or graphics API. The original window path was tested on an RTX 5090 with independent test windows and recorded images; the new screen mode is built for user testing.
+
+## Run
+
+1. Run `display_filter.exe`. No administrator access is needed.
+2. Select `nvngx_dlssnr.dll`. A copy in `runtime/` beside the application is selected automatically on first use. Display Filter does not apply an Authenticode signature check to this NR DLL; the driver reports any loading or compatibility failure.
+3. Select a **Screen:** entry to filter a whole monitor, or a **Window:** entry for one application. Click **Start capture**, then minimize Display Filter or switch to another application. Use windowed or borderless mode for games.
+4. **Ctrl+Alt+End** stops capture. Closing the app also removes its output immediately after its worker stops.
+
+The output window does not take focus or forward input: clicks reach the underlying applications. **Screen mode** covers one selected monitor at 1:1 size and stays active across application switches. **Window mode** follows the selected window's client rectangle and hides when that window loses focus or minimizes. Both modes hide the overlay while you operate Display Filter's controls, and stop if the source disappears or rendering fails. Screen mode requests borderless capture through Windows; accept its permission prompt if shown. Windows can retain the border if permission is unavailable or another capture application requires it. Window mode retains the normal capture border. Exclusive fullscreen, protected content and the secure desktop are outside this prototype's scope.
+
+**Target FPS** ranges from 1–360; **0** is uncapped. With DLSS FG off, it caps processing. With FG enabled, processing is capped at target divided by the requested multiplier: 120/2x = 60, 120/3x = 40, 120/4x = 30 real frames per second. Fractional rates are preserved. The capture producer shares this cap, sampling the newest available image at each acquisition rather than copying every source frame. This caps Display Filter's work, not the source application's render rate. Capture/GPU speed and monitor refresh still constrain visible output.
+
+**DLSS FG** offers Off, 2x, 3x and 4x where the runtime supports them. Stop capture before changing this selection. It interpolates the finished NR output using estimated motion and synthetic depth; text, HUDs and disocclusions can exhibit artifacts. NVIDIA App overrides may change the actual multiplier: the status reports requested and observed ratios separately, and the requested target is also supplied to Dynamic FG. For fixed multipliers, use application-controlled FG settings in NVIDIA App. See **FRAMEGEN.md** for validation and limitations.
+
+In screen mode the output overlay is excluded from Windows capture to prevent repeatedly processing its own output. Initialization reports an error if Windows rejects capture exclusion. The controls are ordinary windows; focusing them hides the output. Automated verification of monitor capture exclusion remains inconclusive; see `VALIDATION.md`.
+
+The controls are grouped into **Model passes**, **Input and resolution**, **Composition**, **HDR output**, and **Inspect and compare** tabs. One or two passes are available normally; **Unlock up to 10 passes** enables the rest. **Edit pass** can select any of the ten profiles, even while it is inactive. Later passes inherit pass 1 with Local tone 0 by default. Uncheck **Inherit pass 1 settings** to edit that pass's intensity, structure, tone, skin structure, style, preset and auto skin mask independently. Re-enabling inheritance restores the inherited profile. Each active pass owns its feature, parameter map and temporal history. The final detail/colour composition is applied once after all passes.
+
+**Highlight guard** now exposes the same 1�8� bound as OptiScaler. **Hold captured frame** freezes an application-owned copy, including while model resolution changes. **Apply model edit** can hide the edit while the model continues running. Original/processed comparison now includes a movable wipe and side-by-side view, zoom, swapped sides and adjustable labels. Debug views show the proxy, model answer or amplified difference. Hold, edit visibility, comparison mode and debug view start in their ordinary live/processed state each session. These controls do not operate the source application.
+
+Model profiles and appearance settings are saved in the existing user-data directory. Existing settings keep their values. The earlier one/two-pass defaults produce the same pixels in the headless reference comparison; this release adds controls and does not claim to close the separately reported image-quality gap.
+
+**Content colour** selects input handling. Auto follows the display's HDR state. Choose **Finished SDR** for SDR games or desktop images, including those displayed with Windows HDR enabled: the app reverses scRGB capture encoding to recover the sRGB values OptiScaler gives NR in its finished-SDR path, then converts the result back for presentation. It does not apply another HDR tone curve. Choose **HDR** for native HDR/Auto HDR/RTX HDR output. Capture alone does not identify which kind of content is being displayed, so Auto cannot distinguish SDR on an HDR desktop.
+
+Model intensity, Local structure and Local tone now use OptiScaler's 0–2 range. Their first-pass defaults are all 1. Detail strength is a separate final-composition control, also 0–2; raising it does not ask the model to synthesize more aggressive details. Older saved model values above 2 are clamped when loaded; other saved values are retained. For a baseline comparison, manually return intensity/structure/tone and detail/colour strength to 1, then match model dimensions and pass count. Preset, style and auto skin masking are editable for each pass. In-game INI profiles are not imported automatically.
+
+All five OptiScaler HDR mapping choices are available: soft knee, Neutwo composed/replace and Hybrid composed/replace. New settings default to soft knee like OptiScaler; existing Hybrid/Neutwo selections retain their meaning. Replace modes bypass the shader's normal strength/highlight composition; the app's explicit zero-strength/disabled bypass still returns the original capture. See `ALIGNMENT.md` for the source audit and remaining differences.
+
+Leave **Reference white** at **0** for desktop images: on HDR displays this follows Windows' SDR white level, and on SDR displays it uses 80 nits. The actual reference is reported in the status. Native HDR content can use an explicit reference, such as 203 nits, because its intended white need not match desktop SDR white. This changes the normalization shown to NR, not Windows' brightness settings. The Hybrid menu item now selects the shared shader's actual Hybrid curve; earlier builds mistakenly selected the older soft-knee curve.
+
+The **Reference white** slider covers 0–10,000 nits, with finer spacing at ordinary reference levels. Its number field allows exact entry. The left endpoint, 0, restores automatic desktop white. Slider changes apply on release; arrow keys also work.
+
+**HDR output** adjusts the completed picture after NR and its composed/replace resolve, before presentation and optional FG. Both controls default to **0**, preserving existing output. They are active only while the display is in HDR mode, including when processing SDR content on an HDR desktop. They do not change Windows or the source application's HDR configuration, and cannot recover detail already clipped in the captured source. Values use Windows' [scRGB luminance convention](https://learn.microsoft.com/en-us/windows/win32/direct3darticles/high-dynamic-range#option-1-use-fp16-pixel-format-and-scrgb-color-space); physical brightness still depends on display calibration and tone mapping.
+
+- **Peak brightness (0–10,000 nits):** 0 disables highlight adjustment. A positive target leaves values below 75% of the target unchanged, then smoothly compresses brighter values toward that ceiling. RGB ratios are preserved. This limits highlights; it does not expand SDR into HDR. Choose a target appropriate to your display.
+- **Black level (-5 to +5 nits):** 0 is neutral. Positive values lift near-black; negative values darken it. The adjustment fades to zero at reference white so highlights are unaffected. Start with small changes such as 0.05 nits; strong negative values can intentionally crush shadow detail.
+
+Both have sliders and exact-entry fields. Original comparison regions, letterboxing, zero-strength/disabled/hidden-edit bypass and debug views are excluded; FPS/comparison labels are drawn afterward. Output tuning shares the existing label pass rather than adding another full-frame dispatch when the FPS tracker is active.
+
+**Model resolution above 100%** now supersamples NR and reduces its answer back to the captured size using OptiScaler's compiled spatial filters: FSR1, Bicubic, Catmull-Rom, Lanczos2/3, Kaiser2/3 and MAGIC. As in OptiScaler, the input is enlarged with Bicubic except when FSR1 is selected. Below 100%, the existing bilinear/private-DLSS enlargement options apply. The output stays at the captured size at every model scale. High resolutions and extra passes require more VRAM; model initialization errors are reported explicitly.
+
+**Model colour** is separate from model intensity: 0 retains original colours while allowing the model's lighting/detail edit; 1 includes the model's colours; above 1 boosts chroma, up to 4. This is the same final-composition colour control as OptiScaler, applied once after all model passes.
+
+**Model skin structure** controls the runtime's skin-detail parameter, from -1 (follow Local structure) to 2. **Separate skin / environment** enables four final-edit sliders: skin detail/lighting, skin colour, environment detail/lighting and environment colour. Each ranges from 0 (original) to 1 (full edit). All default to 1, with separation disabled, preserving the previous default output. They work with both pass counts and both transfer methods.
+
+**Preview colour-based skin mask** shows the selected colours in white and excluded colours in black. This mask is computed from the original picture, independently of the model's skin-structure parameter. It is approximate colour selection, not semantic skin segmentation: warm objects may be included and coloured lighting may hide skin. Preview is temporary and is not saved across launches. Appearance sliders apply on release or keyboard changes.
+
+**Model resolution** ranges from 25�200% of each capture dimension (100% by default). For example, 50% processes a 4K capture at 1920×1080 and still presents 3840×2160. Below native size, the input is area-downsampled before NR; **Upscaling** offers Bilinear or private DLSS SR. Lower model resolution can change the character and detail of the effect as well as reduce model cost.
+
+**Edit transfer: Matched residuals** is the default. Below native size, both transfer modes first measure the NR lighting change against its input at the same model resolution. Lighting gain and colour are enlarged independently, then reconstructed against the native-size proxy before the existing HDR, strength and skin/environment composition. This avoids treating input-resize blur as an NR lighting change. Matched transfers the change in chromaticity onto the original's colour detail; **Classic composition** retains the resized model chromaticity. At 100% the existing native path remains unchanged. Supersampling above 100% retains its existing filters and composition.
+
+**Private DLSS SR** works with both edit-transfer choices. It enlarges the bounded relative-lighting/colour field rather than an absolute RGB difference or raw model image. Bilinear uses the same field, decoding its carrier before interpolation. This is still experimental use of SR with synthetic guides. Switching transfer resets private-DLSS history; selecting DLSS preserves the chosen transfer. No upscaler is needed at 100%. With multiple NR passes, the reference remains the input before the first pass and composition controls apply once.
+
+The reconstruction keeps lighting independent of colour interpolation and gamut limits. Near-black model samples obtain a lighting reference from paired neighbours; truly black native pixels remain black. This deliberately avoids amplifying numerical noise or inventing light in a zero-valued source pixel. It can therefore suppress model-generated light in completely black source pixels below native resolution. Raw model output still shows the unmodified NR answer. The input downsampler, NR settings and motion vectors are unchanged.
+
+The private-DLSS carrier remains bounded against its low-resolution footprint. HDR replace modes also retain the fallback to the bilinear reference when DLSS alone would cross the inverse tone curve's white limit. The previous skin-colour edge suppression has been removed: this correction addresses reconstruction for all colours and both transfer modes. Numerical fixtures reproduce and remove a resize-induced rim, but actual content and temporal stability still need user verification.
+
+Private DLSS needs an original NVIDIA-signed `nvngx_dlss.dll` beside the selected NR runtime or in `runtime/` beside this executable. The local testing package includes it. Failures are reported explicitly rather than silently substituting Bilinear. NR and DLSS share the app's driver initialization but use separate feature handles and parameter maps. Private upscaling is independent of the optional output frame-generation stage.
+
+DLSS uses constant depth and either zero or estimated model-resolution motion. With motion disabled it receives a reset each frame; with estimated motion it keeps history until a cut, interruption or incompatible model/colour change. Capture is already de-jittered, so supplied jitter is zero. These are synthetic guides, not native game DLSS inputs. Small output variations were observed even on identical input with reset asserted; live image stability still needs user testing.
+
+**Estimate motion from previous frames (experimental)** computes motion on the GPU from successive captures and supplies it to NR. It is off by default. This mode retains temporal history between continuous frames and resets it on detected scene cuts, interruptions, source-size changes and mode changes. Estimated motion can be inaccurate around occlusions, effects and text; depth remains constant.
+
+Motion shaders are compiled into the executable during the build, avoiding a multi-second compilation stall when enabling the mode. The status explicitly reports when the overlay is paused because these controls or another window have focus. In window mode, switch back to the selected source to see the processed output.
+
+Settings and logs live in `%LOCALAPPDATA%\OptiScalerNR`. Initialization errors appear in the control window and `capture.log`. If the NGX driver rejects NR creation, Display Filter now tries the selected DLL through OptiScaler's shared compatibility loader. This adapts the NR DLL's caller-path imports inside this process; it does not modify DLL files or the driver. The log records the runtime path and loader results. Running status includes NR history-reset counts for diagnosing differences at matched settings.
+
+For RTX 40-series testing, select an NR DLL intended for that GPU generation. Changing the executable does not make a Blackwell-only model support Ada. The previously supplied RTX 20–40 compatibility DLL can now use the same loader as OptiScaler. Its creation and rendering path was verified on an RTX 5090; an actual RTX 40-series result is still required.
+
+**RTX 40 MFG unlock is built into the executable.** Select **3x** or **4x** and start capture to activate it automatically on a verified Ada adapter. No ReShade, ASI loader, or extra unlock DLL is needed. It includes the temporal correction for distinct intermediate frames and software presentation pacing. Off/2x do not initiate an unlock; RTX 50-series uses native FG. A previously prepared provider remains loaded until application exit so stopping and restarting capture cannot discard its patched descriptors.
+
+The unlock applies only when the selected GPU, actual loaded NVIDIA runtime, temporal descriptors and Streamline wrapper match supported layouts. Unknown or incomplete matches retain the 2x limit and report the reason in `capture.log`. The DLL files and NVIDIA App settings are unchanged. Actual RTX 40 output quality, pacing and stability remain unverified locally; this PC has a 5090. See `MFGUnlock_LICENSE.txt` for the reused implementation's attribution.
+
+Streamline error 24 is an internal exception, not a GPU support result. A September 22 crash during capture restart was traced to an NGX logging callback into an unloaded Streamline plugin. NGX now initializes first with an application-owned callback and all NR/SR/FG search paths. Streamline crash dumps and their matching logs are under `%ProgramData%\NVIDIA\Streamline\display_filter`. Restart Display Filter after installing this fix so the old process and callbacks are discarded.
+
+Logging is bounded: `capture.log` and one backup, `capture.log.1`, are limited to **2 MiB each** (4 MiB total). An oversized log from an older build is trimmed to its newest 2 MiB when rotated. Normal operation logs a performance summary at most once every 30 seconds, plus startup, state changes and runtime messages. The on-screen FPS counter and status update normally.
+
+## Image and performance limits
+
+- The whole captured picture is processed, including text, application controls, game HUDs and software cursors rendered by the source application.
+- By default, depth is constant, motion is zero and the model resets history for every evaluation. Optional estimated motion does not reproduce engine-supplied guide buffers. Either mode can produce temporal variation or distort small details.
+- Capture and NR processing use FP16 scRGB. FG-off output retains scRGB; FG output converts to sRGB/8-bit SDR or PQ/10-bit HDR10, as required by DLSS FG. The existing OptiScaler colour shader runs unchanged, using the desktop's SDR reference white or the explicit reference setting. If Windows cannot report HDR desktop SDR white, the fallback is 203 nits. The app does not change Windows or source-application HDR settings.
+- There is one processing submission in flight, a three-frame capture pool, and no accumulating frame backlog. No per-frame CPU image readback is used in the app. Estimated motion reads back a four-byte scene-cut counter after its GPU work finishes.
+- The status reports acquisition-to-`Present` **return**, which can occur before GPU completion or scanout. It is not mouse-to-photon latency. See `VALIDATION.md` for separate GPU completion measurements.
+- In-engine pre-upscale placement and engine-supplied depth/motion guides are unavailable. External FG uses estimated motion and synthetic depth instead.
+
+## Isolation
+
+The application never installs a proxy into the source application, injects into it, opens its process memory, hooks its rendering/input, or changes its files/configuration. Optional FG wraps Display Filter's own graphics interfaces and redirects the loaded Streamline common plugin's foreground-window import inside our process. This prevents NVIDIA's focus gate from disabling our non-activating overlay. It changes no DLL files, system focus or other processes; the import is restored on teardown. Capture and the app's own focus checks use the real Windows APIs. The NVIDIA dispatcher is loaded from its installed registry path with explicit loader search flags. The application's signature check on the selected NR model has been removed, including from the packaging script. It still validates the installed driver dispatcher and separate DLSS SR runtime.
+
+The application uses its own NGX project identity and the ordinary driver feature-18 interface. The single owned NGX instance shuts down through the process-wide NGX API. The current driver's per-device shutdown failed during development; no driver code was modified to address it. The driver dispatcher stays loaded until process exit to prevent callbacks into unloaded code; stopping capture still releases the model and GPU resources.
+
+Capture support depends on Windows and the selected application. If capture is refused, report the failure; there is no alternate injection path. Technical isolation does not establish permission under an application's terms or certify anti-cheat compatibility.
+
+## Build and verify
+
+Requires Windows 11, Visual Studio 2022 C++ tools/CMake, Windows SDK 10.0.26100 or newer, and the parent OptiScaler source/dependencies. The application currently uses the MSVC x64 runtime.
+
+From the repository root, initialize dependencies with `git submodule update --init --recursive`, then run `./standalone/NrCapture/build.ps1`. The executable is written to `standalone/NrCapture/out/Release/display_filter.exe`. Build outputs, logs and the local `runtime/` directory are excluded from Git.
+
+The commands below assume your current directory is `standalone/NrCapture`. NVIDIA runtime DLLs are supplied separately and are not required to compile the application.
+
+```powershell
+./build.ps1
+./out/Release/NrCaptureCheck.exe --runtime C:/NR/nvngx_dlssnr.dll --width 2560 --height 1440 --frames 30 --image C:/fixtures/frame.png
+./out/Release/NrCaptureCheck.exe --runtime C:/NR/nvngx_dlssnr.dll --capture 1 --width 3840 --height 2160 --frames 180
+./out/Release/NrCaptureCheck.exe --runtime C:/NR/nvngx_dlssnr.dll --monitor 1
+./out/Release/NrCaptureCheck.exe --runtime C:/NR/nvngx_dlssnr.dll --lifecycle 1
+./out/Release/NrCaptureCheck.exe --runtime C:/NR/nvngx_dlssnr.dll --motion-check 1
+./out/Release/NrCaptureCheck.exe --runtime C:/NR/nvngx_dlssnr.dll --motion 1 --width 2560 --height 1440 --frames 30 --image C:/fixtures/frame.png
+./out/Release/NrCaptureCheck.exe --display-info 1
+./out/Release/NrCaptureCheck.exe --runtime C:/NR/nvngx_dlssnr.dll --passes 2 --motion 1 --width 3840 --height 2160 --frames 12 --image C:/fixtures/frame.png
+./out/Release/NrCaptureCheck.exe --runtime C:/NR/nvngx_dlssnr.dll --upscaler 1 --scale 50 --passes 2 --motion 1 --width 3840 --height 2160 --frames 12 --image C:/fixtures/frame.png
+```
+
+The fixture capture checks open **only their own test windows**. The window fixture check covers capture, NR, composed output, click-through/focus, resize and restart. The monitor check covers the primary screen with test windows and checks capture exclusion against an independent window capture, application switching, control pause/resume and restart. Its latest run did not complete successfully; see `VALIDATION.md`. Neither check launches a game. The image check accepts ordinary WIC images and tightly packed RGBA16F `.raw` files at the specified dimensions. Its PNG previews are SDR views, not HDR reference images.
+
+The standalone target shares OptiScaler's model parameter helpers, compiled colour shader/constants and GPU retirement implementation. A small compile-time native-object adapter replaces game-wrapper identity resolution. Private DLSS calls the app's own NGX dispatcher directly; no OptiScaler hooks, global configuration, game-facing upscaler infrastructure, game loader or quirk code is linked. Existing game projects and release DLLs are not rebuilt by this target.
+
+The source follows the parent project's GPLv3 license. NVIDIA runtime files are user-supplied and retain their own terms; a locally prepared testing folder is not a public redistributable release.
+
+A small white counter in the top-left shows processed FPS with FG off. With FG enabled it shows two lines: IN is the real processed frames fed to FG; OUT is NVIDIA's reported presentation rate including generated frames. Both update over the same half-second interval. Text is composited at 50% opacity after NR, without a background. This is not the underlying game's render rate or a measurement of physical monitor scanout.
+
+## Capture backend comparison
+
+Use the **Capture backend** selector beside the source selector. Stop capture before changing it, then start again with the same model settings and source:
+
+- **Windows Graphics Capture** (default): whole screens or individual windows.
+- **DXGI Desktop Duplication**: whole screens connected to the processing GPU. Uses DuplicateOutput1, retaining FP16/scRGB for HDR and converting SDR to linear FP16 on the GPU. No additional game files, injection, hooks, or CPU image copies. If a display/session change interrupts duplication, the output hides; start capture again. Use WGC for screens attached to another adapter.
+
+Both backends run capture on a dedicated producer thread. Three reusable shared GPU textures hold one processing frame and up to two replaceable captures. Processing always selects the newest completed copy. Capture remains overlapped with NR, and captured frames cannot accumulate into an unbounded queue. The producer's acquisition/copy rate is capped at the processing target, including the FG divisor, so a 120 FPS source does not cause 120 full-resolution copies for 60 FPS NR. DXGI keeps its acquired surface owned until the next paced acquisition, allowing Windows to accumulate updates. WGC drains its frame pool to the newest available image at each acquisition; its internal Windows capture rate is not controlled by this limiter. A faster source still consumes CPU/GPU resources and presents at desktop resolution even when its internal render resolution is lowered. No fixed 60 FPS ceiling is introduced; zero remains uncapped.
+
+The status includes backend name, acquired FPS, GPU-wait time and Present time. Detailed timing logs are **off by default**. For troubleshooting only, set the process environment variable `NR_CAPTURE_TIMINGS=1` before launching the application; this enables two-second pipeline reports and GPU stage sampling. Unset it for normal use. Rotation remains enabled in diagnostic mode. The detailed reports include published FPS, capture copy/conversion time and frame age at Present return. CPU elapsed timings are not hardware scanout latency; record/prepare includes motion's scene-cut synchronization. Acquired FPS counts images actually obtained from the backend, not all game frames.
+
+In diagnostic mode, the log samples **GPU stage elapsed** every 32 processed frames: input motion, NR, private DLSS, edge correction, composition, HDR/labels and FG preparation. These use GPU timestamps read after the existing completion fence; they add no per-stage CPU wait. Durations include time the GPU spends scheduling other workloads. In contrast, the CPU FG-preparation interval can include waiting for earlier NR/DLSS commands and must not be interpreted as FG-only GPU cost. Normal operation does not create the GPU timing query/readback resources.
+
+If performance remains poor after HWiNFO exits or crashes, an Administrator terminal can check for a leftover graphics trace with `logman query HWiNFO64 -ets`. With HWiNFO closed, `logman stop HWiNFO64 -ets` stops that named session. The app does not stop external tracing or change monitoring settings automatically. A loaded HWiNFO driver alone does not establish the cause of a slowdown; compare the same scene and filter settings after removing the orphaned trace.
+
+The overlay requests WDA_EXCLUDEFROMCAPTURE for both screen backends. Actual DXGI exclusion, cursor behaviour and HDR presentation need live verification on the tester's Windows/driver combination. DXGI can include a cursor already embedded in the desktop image; separate hardware-pointer-only updates are ignored. No performance gain or multiplayer acceptance is guaranteed by the backend choice. Stop with Ctrl+Alt+End if output is incorrect, then switch back to WGC.
+
+When FG is enabled and NR supplies motion at native (100%) model resolution, both stages now share that scene-motion guide. This avoids estimating full-resolution motion twice. Otherwise FG estimates its own output motion as before. The status shows which route is active. The FPS target still caps real processing at target/multiplier; for example, choose 120 at 2x for a 60 FPS input ceiling.

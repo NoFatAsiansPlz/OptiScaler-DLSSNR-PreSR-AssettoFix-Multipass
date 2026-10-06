@@ -722,23 +722,32 @@ void PollInputFallbackLocked()
         }
     }
 
-    _state.PolledMouseUsedThisFrame |= PollMouseButtonLocked(VK_LBUTTON, 0, time);
-    _state.PolledMouseUsedThisFrame |= PollMouseButtonLocked(VK_RBUTTON, 1, time);
-    _state.PolledMouseUsedThisFrame |= PollMouseButtonLocked(VK_MBUTTON, 2, time);
-    _state.PolledMouseUsedThisFrame |= PollMouseButtonLocked(VK_XBUTTON1, 3, time);
-    _state.PolledMouseUsedThisFrame |= PollMouseButtonLocked(VK_XBUTTON2, 4, time);
+    // Do not merge GetAsyncKeyState with Win32 button/key messages when the
+    // input window is subclassed. Assetto Corsa/CSP pumps those messages on a
+    // different schedule from Present; polling the same controls here can
+    // overwrite a real down/up transition before ImGui consumes it. Cursor
+    // position remains polled above because it is an absolute value, not an
+    // edge-triggered button state.
+    if (!_state.WndProcSubclassed)
+    {
+        _state.PolledMouseUsedThisFrame |= PollMouseButtonLocked(VK_LBUTTON, 0, time);
+        _state.PolledMouseUsedThisFrame |= PollMouseButtonLocked(VK_RBUTTON, 1, time);
+        _state.PolledMouseUsedThisFrame |= PollMouseButtonLocked(VK_MBUTTON, 2, time);
+        _state.PolledMouseUsedThisFrame |= PollMouseButtonLocked(VK_XBUTTON1, 3, time);
+        _state.PolledMouseUsedThisFrame |= PollMouseButtonLocked(VK_XBUTTON2, 4, time);
+
+        for (int vk = 0; vk < 256; ++vk)
+        {
+            const bool wasDown = _state.Keys[vk].Down;
+            PollVirtualKeyLocked(vk, time);
+
+            if (_state.Keys[vk].Down != wasDown || _state.Keys[vk].Pressed || _state.Keys[vk].Released)
+                _state.PolledKeyboardUsedThisFrame = true;
+        }
+    }
 
     if (_state.PolledMouseUsedThisFrame)
         _state.PolledMouseFrameCount++;
-
-    for (int vk = 0; vk < 256; ++vk)
-    {
-        const bool wasDown = _state.Keys[vk].Down;
-        PollVirtualKeyLocked(vk, time);
-
-        if (_state.Keys[vk].Down != wasDown || _state.Keys[vk].Pressed || _state.Keys[vk].Released)
-            _state.PolledKeyboardUsedThisFrame = true;
-    }
 
     if (_state.PolledKeyboardUsedThisFrame)
         _state.PolledKeyboardFrameCount++;
@@ -1481,8 +1490,12 @@ bool ShouldBlockVirtualKey(int vk)
 {
     std::unique_lock lock(_state.Mutex);
 
-    if (IsMouseVirtualKey(vk))
-        return ShouldBlockMouseInputLocked();
+    // Assetto Corsa/CSP derives its legacy mouse-button and Insert messages by
+    // polling these virtual keys. Hiding them here prevents the messages that
+    // OptiInput itself needs from ever being produced. The resulting Win32
+    // messages are still consumed while the overlay is visible.
+    if (IsMouseVirtualKey(vk) || vk == VK_INSERT)
+        return false;
 
     return ShouldBlockKeyboardInputLocked();
 }

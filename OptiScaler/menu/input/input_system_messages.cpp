@@ -526,6 +526,8 @@ bool HandleWindowMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, Inpu
 
         const int button = MouseMessageToButton(msg, wParam);
         SetMouseDown(button, GetMessageTime(), blockMouse);
+        LOG_DEBUG("overlay mouse message down button:{} source:{} blocked:{}", button, InputMessageSourceName(source),
+                  blockMouse ? 1 : 0);
         OPTIINPUT_LOG_VERBOSE("mouse down button:{} blocked:{} pos=({}, {})", button, blockMouse ? 1 : 0,
                               _state.MouseClientPos.x, _state.MouseClientPos.y);
 
@@ -542,6 +544,8 @@ bool HandleWindowMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, Inpu
 
         const int button = MouseMessageToButton(msg, wParam);
         const bool wasBlockedDown = SetMouseUp(button, GetMessageTime());
+        LOG_DEBUG("overlay mouse message up button:{} source:{} blockedDown:{}", button, InputMessageSourceName(source),
+                  wasBlockedDown ? 1 : 0);
         OPTIINPUT_LOG_VERBOSE("mouse up button:{} wasBlockedDown:{} pos=({}, {})", button, wasBlockedDown ? 1 : 0,
                               _state.MouseClientPos.x, _state.MouseClientPos.y);
 
@@ -571,6 +575,9 @@ bool HandleWindowMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, Inpu
     {
         const int vk = NormalizeModifierVirtualKey(static_cast<int>(wParam), lParam);
         SetKeyDown(vk, GetMessageTime(), blockKeyboard);
+        if (vk == VK_INSERT)
+            LOG_DEBUG("overlay Insert message down source:{} blocked:{}", InputMessageSourceName(source),
+                      blockKeyboard ? 1 : 0);
         OPTIINPUT_LOG_VERBOSE("key down vk:{} blocked:{}", vk, blockKeyboard ? 1 : 0);
 
         shouldBlock = blockKeyboard;
@@ -582,6 +589,9 @@ bool HandleWindowMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, Inpu
     {
         const int vk = NormalizeModifierVirtualKey(static_cast<int>(wParam), lParam);
         const bool wasBlockedDown = SetKeyUp(vk, GetMessageTime());
+        if (vk == VK_INSERT)
+            LOG_DEBUG("overlay Insert message up source:{} blockedDown:{}", InputMessageSourceName(source),
+                      wasBlockedDown ? 1 : 0);
         OPTIINPUT_LOG_VERBOSE("key up vk:{} wasBlockedDown:{}", vk, wasBlockedDown ? 1 : 0);
 
         // If the game saw the key down before the menu opened,
@@ -1109,19 +1119,17 @@ BOOL WINAPI hkGetKeyboardState(PBYTE keyState)
     {
         for (int vk = 0; vk < 256; vk++)
         {
-            if (!IsMouseVirtualKey(vk))
+            // Assetto Corsa/CSP polls Insert and then emits the corresponding
+            // legacy key messages. Preserve it so the overlay receives its
+            // close shortcut even while other keyboard state stays hidden.
+            if (!IsMouseVirtualKey(vk) && vk != VK_INSERT)
                 keyState[vk] = 0;
         }
     }
 
-    if (shouldBlockMouse)
-    {
-        keyState[VK_LBUTTON] = 0;
-        keyState[VK_RBUTTON] = 0;
-        keyState[VK_MBUTTON] = 0;
-        keyState[VK_XBUTTON1] = 0;
-        keyState[VK_XBUTTON2] = 0;
-    }
+    // Keep mouse virtual keys visible to the game-side input pump. The Win32
+    // button messages it generates are consumed below before DispatchMessage,
+    // so they reach ImGui without being delivered to the game WndProc.
 
     return result;
 }
